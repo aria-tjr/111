@@ -20,6 +20,7 @@ from layers.layer3_momentum import MomentumResult
 from layers.layer4_orderflow import OrderFlowResult
 from layers.layer5_structure import StructureResult
 from layers.layer6_session import SessionResult
+from layers.layer7_ml import MLLayerResult
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class NexusScore:
-    total: float          # 0-100
+    total: float          # 0-100 (base layers) + ML delta
     grade: str            # "A+", "A", "B", "C", "SKIP"
     direction: str        # "LONG", "SHORT", "SKIP"
     leverage: int         # 200, 100, 50, 0
@@ -43,6 +44,8 @@ class NexusScore:
     take_profit_3: float
     risk_reward: float
     atr: float
+    ml_score: float = 0.0       # L7 delta applied to total
+    ml_direction: str = "N/A"   # ML predicted direction
 
 
 # ──────────────────────────────────────────────────────────
@@ -120,12 +123,14 @@ def compute(
     l6: SessionResult,
     candles_15m: list,
     regime: Optional[RegimeResult] = None,
+    l7: Optional[MLLayerResult] = None,
 ) -> NexusScore:
     """
     Compute NEXUS score from all layer results.
 
     Uses adaptive weights based on market regime (trending vs volatile).
     Applies conflict penalties and generates ATR-based SL/TP levels.
+    L7 (ML) applies a signed delta (-10..+10) on top of the base score.
     """
     # Regime determines weight set
     if regime is not None:
@@ -206,7 +211,22 @@ def compute(
     if l6.current_session == "DEAD":
         penalty += 3.0
 
-    total = max(0.0, min(100.0, weighted - penalty))
+    base_total = max(0.0, min(100.0, weighted - penalty))
+
+    # ── L7 ML delta ──────────────────────────────────────
+    ml_delta = 0.0
+    ml_dir_out = "N/A"
+    if l7 is not None and config.USE_ML:
+        raw_delta = l7.score  # already in -10..+10
+        # Only apply if ML confidence clears threshold
+        if l7.confidence >= config.ML_MIN_CONFIDENCE:
+            ml_delta = float(np.clip(raw_delta, config.ML_MAX_PENALTY, config.ML_MAX_BOOST))
+        ml_dir_out = l7.ml_direction
+        if ml_delta != 0:
+            logger.debug("L7 ML delta: %.1f (direction=%s confidence=%.2f)",
+                         ml_delta, l7.ml_direction, l7.confidence)
+
+    total = max(0.0, min(100.0, base_total + ml_delta))
 
     # ── SL/TP using ATR ──────────────────────────────────
     # Use l1 ATR if available, else recompute
@@ -253,7 +273,9 @@ def compute(
         "l4": round(l4.score, 2),
         "l5": round(l5.score, 2),
         "l6": round(l6.score, 2),
+        "l7_ml_delta": round(ml_delta, 2),
         "penalty": round(penalty, 2),
+        "base_total": round(base_total, 2),
         "weighted_raw": round(weighted, 2),
         "weights_used": "VOLATILE" if use_l1.volatility_state == "high" else "TRENDING",
     }
@@ -271,4 +293,6 @@ def compute(
         take_profit_3=round(tp3, 6),
         risk_reward=round(risk_reward, 2),
         atr=round(atr, 6),
+        ml_score=round(ml_delta, 2),
+        ml_direction=ml_dir_out,
     )

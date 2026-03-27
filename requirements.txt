@@ -1,3 +1,7 @@
 aiohttp>=3.9.0
 numpy>=1.24.0
 python-dotenv>=1.0.0
+
+# ML / DL (required for Layer 7 — can be omitted, engine works without them)
+scikit-learn>=1.4.0
+torch>=2.2.0          # CPU build is sufficient: pip install torch --index-url https://download.pytorch.org/whl/cpu

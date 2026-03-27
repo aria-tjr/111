@@ -69,6 +69,7 @@ def format_signal(
     l4: Any,
     l5: Any,
     l6: Any,
+    l7: Any = None,
 ) -> str:
     """
     Produce a full NEXUS signal box.
@@ -124,6 +125,21 @@ def format_signal(
     l6_pass = l6.session_quality in ("HIGH", "MEDIUM")
     l6_text = f"L6 Session:   {_check(l6_pass)} {l6.current_session:<10} {l6.session_quality}"
     lines.append(_line(l6_text))
+
+    # L7 ML (optional)
+    if l7 is not None and (l7.rf_available or l7.lstm_available):
+        ml_models = []
+        if l7.rf_available:
+            ml_models.append("RF")
+        if l7.lstm_available:
+            ml_models.append("LSTM")
+        delta_str = f"{score.ml_score:+.0f}pts" if score.ml_score != 0 else "neutral"
+        conf_str  = f"{l7.confidence * 100:.0f}%"
+        l7_pass   = l7.agrees_with_l2 and l7.confidence >= 0.55
+        l7_text   = f"L7 ML:        {_check(l7_pass)} {'+'.join(ml_models):<7} {l7.ml_direction:<7} {delta_str} ({conf_str})"
+        lines.append(_line(l7_text))
+    elif l7 is not None:
+        lines.append(_line("L7 ML:        ~ no model (run --train)"))
 
     lines.append(_divider())
 

@@ -26,6 +26,7 @@ from layers import (
     layer4_orderflow,
     layer5_structure,
     layer6_session,
+    layer7_ml,
 )
 from output import signal_formatter, telegram_bot
 from scoring.nexus_score import NexusScore, compute
@@ -42,6 +43,7 @@ async def analyze(
     symbol: str = config.DEFAULT_SYMBOL,
     timeframe: str = config.PRIMARY_TF,
     send_telegram: bool = False,
+    use_ml: bool = True,
 ) -> Optional[NexusScore]:
     """
     Full NEXUS analysis pipeline for a single symbol.
@@ -175,6 +177,22 @@ async def analyze(
     logger.info("L6 Session: %s quality=%s btc_ok=%s score=%.0f",
                 l6.current_session, l6.session_quality, l6.btc_correlation_ok, l6.score)
 
+    # ── 4b. L7 ML Consensus ───────────────────────────────
+    effective_use_ml = use_ml and config.USE_ML
+    layer_results_for_ml = {"l1": l1, "l2": l2, "l3": l3, "l4": l4, "l5": l5, "l6": l6}
+    l7 = layer7_ml.analyze(
+        candles_15m,
+        direction_hint=direction_hint,
+        layer_results=layer_results_for_ml,
+        use_ml=effective_use_ml,
+    )
+    if l7.rf_available or l7.lstm_available:
+        logger.info("L7 ML: dir=%s conf=%.2f score=%+.1f RF=%s LSTM=%s",
+                    l7.ml_direction, l7.confidence, l7.score,
+                    l7.rf_available, l7.lstm_available)
+    else:
+        logger.info("L7 ML: no trained models available")
+
     # Optional: incorporate AltFins signals into details
     if altfins_data:
         logger.info("AltFins: momentum=%s trend=%s patterns=%d",
@@ -183,7 +201,7 @@ async def analyze(
                     len(altfins_data.get("patterns", [])))
 
     # ── 5. Compute NEXUS score ────────────────────────────
-    nexus = compute(l1, l2, l3, l4, l5, l6, candles_15m, l1)
+    nexus = compute(l1, l2, l3, l4, l5, l6, candles_15m, l1, l7=l7)
     logger.info("NEXUS: total=%.1f grade=%s direction=%s leverage=%dx",
                 nexus.total, nexus.grade, nexus.direction, nexus.leverage)
 
@@ -193,7 +211,7 @@ async def analyze(
         formatted = signal_formatter.format_skip(symbol, timeframe, nexus, reason)
     else:
         formatted = signal_formatter.format_signal(
-            symbol, timeframe, nexus, l1, l2, l3, l4, l5, l6
+            symbol, timeframe, nexus, l1, l2, l3, l4, l5, l6, l7=l7
         )
 
     print(formatted)
@@ -235,10 +253,48 @@ if __name__ == "__main__":
         action="store_true",
         help="Send signals to Telegram",
     )
+    parser.add_argument(
+        "--train",
+        action="store_true",
+        help="Train ML models on historical data then exit",
+    )
+    parser.add_argument(
+        "--train-bars",
+        default=5000,
+        type=int,
+        dest="train_bars",
+        help="Number of historical bars to use for training (default: 5000)",
+    )
+    parser.add_argument(
+        "--train-epochs",
+        default=50,
+        type=int,
+        dest="train_epochs",
+        help="LSTM training epochs (default: 50)",
+    )
+    parser.add_argument(
+        "--no-ml",
+        action="store_true",
+        dest="no_ml",
+        help="Disable ML layer (L7) for this run",
+    )
     args = parser.parse_args()
 
-    if args.scanner:
+    if args.train:
+        from ml.trainer import train as ml_train
+        asyncio.run(ml_train(
+            symbol=args.symbol,
+            interval=args.timeframe,
+            total_bars=args.train_bars,
+            lstm_epochs=args.train_epochs,
+        ))
+    elif args.scanner:
         from scanner.auto_scanner import run_scanner
         asyncio.run(run_scanner())
     else:
-        asyncio.run(analyze(args.symbol, args.timeframe, send_telegram=args.telegram))
+        asyncio.run(analyze(
+            args.symbol,
+            args.timeframe,
+            send_telegram=args.telegram,
+            use_ml=not args.no_ml,
+        ))

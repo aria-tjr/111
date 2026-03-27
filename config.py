@@ -24,6 +24,7 @@ SCANNER_MIN_SCORE = 80
 SCANNER_INTERVAL_SECONDS = 900  # 15 min
 
 # Layer weights (sum to 100) - adaptive
+# Note: L7 (ML) contributes a signed delta (-10..+10) on top, not a weighted layer.
 LAYER_WEIGHTS_TRENDING = {
     "l1": 15,  # regime gate
     "l2": 25,  # trend - more important when trending
@@ -40,3 +41,21 @@ LAYER_WEIGHTS_VOLATILE = {
     "l5": 20,
     "l6": 5,
 }
+
+# ── ML / DL settings ──────────────────────────────────────
+# Set USE_ML = False to bypass L7 entirely (e.g. before training)
+USE_ML = True
+
+# Directory where trained model files are saved/loaded
+ML_MODEL_DIR = "models"
+
+# Minimum ML confidence (0-1) to treat the ML signal as meaningful.
+# Below this, the ml_score contribution is dampened to 0.
+ML_MIN_CONFIDENCE = 0.55
+
+# LSTM sequence length (must match what was used during training)
+LSTM_SEQ_LEN = 50
+
+# ML score caps: how much L7 can boost or penalize the base NEXUS score
+ML_MAX_BOOST   =  10.0   # maximum positive delta
+ML_MAX_PENALTY = -10.0   # maximum negative delta
